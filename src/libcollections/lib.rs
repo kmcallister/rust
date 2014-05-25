@@ -27,7 +27,8 @@
 extern crate debug;
 
 #[cfg(test)] extern crate test;
-#[cfg(test)] #[phase(syntax, link)] extern crate log;
+#[cfg(test, stage0)] #[phase(syntax, link)] extern crate log;
+#[cfg(test, not(stage0))] #[phase(plugin, link)] extern crate log;
 
 pub use bitv::Bitv;
 pub use btree::BTree;

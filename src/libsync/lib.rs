@@ -24,8 +24,11 @@
 
 #![deny(missing_doc)]
 
-#[cfg(test)]
+#[cfg(test, stage0)]
 #[phase(syntax, link)] extern crate log;
+
+#[cfg(test, not(stage0))]
+#[phase(plugin, link)] extern crate log;
 
 extern crate alloc;
 
