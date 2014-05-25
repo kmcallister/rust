@@ -148,7 +148,7 @@
 //!
 //! ```
 //! #![feature(phase)]
-//! #[phase(syntax)] extern crate green;
+//! #[phase(plugin)] extern crate green;
 //!
 //! green_start!(main)
 //!
@@ -210,7 +210,7 @@
 #![allow(visible_private_types)]
 #![deny(deprecated_owned_vector)]
 
-#[cfg(test)] #[phase(syntax, link)] extern crate log;
+#[cfg(test)] #[phase(plugin, link)] extern crate log;
 #[cfg(test)] extern crate rustuv;
 extern crate libc;
 extern crate alloc;
@@ -248,7 +248,7 @@ pub mod task;
 ///
 /// ```
 /// #![feature(phase)]
-/// #[phase(syntax)] extern crate green;
+/// #[phase(plugin)] extern crate green;
 ///
 /// green_start!(main)
 ///
