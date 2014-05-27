@@ -99,11 +99,11 @@ fn get_ast_and_resolve(cpath: &Path, libs: HashSet<Path>, cfgs: Vec<String>)
     }
 
     let krate = phase_1_parse_input(&sess, cfg, &input);
-    let (krate, ast_map) = phase_2_configure_and_expand(&sess, krate,
-                                                        &from_str("rustdoc").unwrap());
+    let (krate, ast_map, lints) = phase_2_configure_and_expand(&sess, krate,
+                                                               &from_str("rustdoc").unwrap());
     let driver::driver::CrateAnalysis {
         exported_items, public_items, ty_cx, ..
-    } = phase_3_run_analysis_passes(sess, &krate, ast_map);
+    } = phase_3_run_analysis_passes(sess, &krate, ast_map, lints);
 
     debug!("crate: {:?}", krate);
     (DocContext {

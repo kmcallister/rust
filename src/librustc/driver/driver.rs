@@ -68,7 +68,7 @@ pub fn compile_input(sess: Session,
     // large chunks of memory alive and we want to free them as soon as
     // possible to keep the peak memory usage low
     let (outputs, trans, sess) = {
-        let (outputs, expanded_crate, ast_map) = {
+        let (outputs, expanded_crate, ast_map, lint_plugins) = {
             let krate = phase_1_parse_input(&sess, cfg, input);
             if stop_after_phase_1(&sess) { return; }
             let outputs = build_output_filenames(input,
@@ -78,15 +78,15 @@ pub fn compile_input(sess: Session,
                                                  &sess);
             let id = link::find_crate_id(krate.attrs.as_slice(),
                                          outputs.out_filestem.as_slice());
-            let (expanded_crate, ast_map) =
+            let (expanded_crate, ast_map, lint_plugins) =
                 phase_2_configure_and_expand(&sess, krate, &id);
-            (outputs, expanded_crate, ast_map)
+            (outputs, expanded_crate, ast_map, lint_plugins)
         };
         write_out_deps(&sess, input, &outputs, &expanded_crate);
 
         if stop_after_phase_2(&sess) { return; }
 
-        let analysis = phase_3_run_analysis_passes(sess, &expanded_crate, ast_map);
+        let analysis = phase_3_run_analysis_passes(sess, &expanded_crate, ast_map, lint_plugins);
         if stop_after_phase_3(&analysis.ty_cx.sess) { return; }
         let (tcx, trans) = phase_4_translate_to_llvm(expanded_crate,
                                                      analysis, &outputs);
@@ -174,7 +174,7 @@ pub fn phase_1_parse_input(sess: &Session, cfg: ast::CrateConfig, input: &Input)
 pub fn phase_2_configure_and_expand(sess: &Session,
                                     mut krate: ast::Crate,
                                     crate_id: &CrateId)
-                                    -> (ast::Crate, syntax::ast_map::Map) {
+                                    -> (ast::Crate, syntax::ast_map::Map, Vec<plugin::lint::Lint>) {
     let time_passes = sess.time_passes();
 
     *sess.crate_types.borrow_mut() = collect_crate_types(sess, krate.attrs.as_slice());
@@ -208,7 +208,7 @@ pub fn phase_2_configure_and_expand(sess: &Session,
         }
     });
 
-    let Registry { syntax_exts, .. } = registry;
+    let Registry { syntax_exts, lints, .. } = registry;
 
     krate = time(time_passes, "expansion", (krate, macros, syntax_exts),
         |(krate, macros, syntax_exts)| {
@@ -252,7 +252,7 @@ pub fn phase_2_configure_and_expand(sess: &Session,
         krate.encode(&mut json).unwrap();
     }
 
-    (krate, map)
+    (krate, map, lints)
 }
 
 pub struct CrateAnalysis {
@@ -268,7 +268,8 @@ pub struct CrateAnalysis {
 /// structures carrying the results of the analysis.
 pub fn phase_3_run_analysis_passes(sess: Session,
                                    krate: &ast::Crate,
-                                   ast_map: syntax::ast_map::Map) -> CrateAnalysis {
+                                   ast_map: syntax::ast_map::Map,
+                                   lint_plugins: Vec<plugin::lint::Lint>) -> CrateAnalysis {
 
     let time_passes = sess.time_passes();
 
@@ -358,8 +359,8 @@ pub fn phase_3_run_analysis_passes(sess: Session,
                                   krate)
     });
 
-    time(time_passes, "lint checking", (), |_|
-         lint::check_crate(&ty_cx, &exported_items, krate));
+    time(time_passes, "lint checking", lint_plugins, |lint_plugins|
+         lint::check_crate(&ty_cx, &exported_items, lint_plugins, krate));
 
     CrateAnalysis {
         exp_map2: exp_map2,
@@ -612,9 +613,9 @@ pub fn pretty_print_input(sess: Session,
 
     let (krate, ast_map, is_expanded) = match ppm {
         PpmExpanded | PpmExpandedIdentified | PpmTyped | PpmFlowGraph(_) => {
-            let (krate, ast_map) = phase_2_configure_and_expand(&sess,
-                                                                krate,
-                                                                &id);
+            let (krate, ast_map, _) = phase_2_configure_and_expand(&sess,
+                                                                   krate,
+                                                                   &id);
             (krate, Some(ast_map), true)
         }
         _ => (krate, None, false)
@@ -651,7 +652,7 @@ pub fn pretty_print_input(sess: Session,
         }
         PpmTyped => {
             let ast_map = ast_map.expect("--pretty=typed missing ast_map");
-            let analysis = phase_3_run_analysis_passes(sess, &krate, ast_map);
+            let analysis = phase_3_run_analysis_passes(sess, &krate, ast_map, vec!());
             let annotation = TypedAnnotation {
                 analysis: analysis
             };
@@ -684,7 +685,7 @@ pub fn pretty_print_input(sess: Session,
                     }
                 }
             };
-            let analysis = phase_3_run_analysis_passes(sess, &krate, ast_map);
+            let analysis = phase_3_run_analysis_passes(sess, &krate, ast_map, vec!());
             print_flowgraph(analysis, block, out)
         }
         _ => {

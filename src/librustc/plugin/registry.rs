@@ -10,6 +10,8 @@
 
 //! Used by plugin crates to tell `rustc` about the plugins they provide.
 
+use plugin::lint::Lint;
+
 use syntax::ext::base::{SyntaxExtension, NamedSyntaxExtension, NormalTT};
 use syntax::ext::base::{IdentTT, ItemDecorator, ItemModifier, BasicMacroExpander};
 use syntax::ext::base::{MacroExpanderFn};
@@ -31,6 +33,9 @@ pub struct Registry {
 
     #[doc(hidden)]
     pub syntax_exts: Vec<NamedSyntaxExtension>,
+
+    #[doc(hidden)]
+    pub lints: Vec<Lint>,
 }
 
 impl Registry {
@@ -39,6 +44,7 @@ impl Registry {
         Registry {
             krate_span: krate.span,
             syntax_exts: vec!(),
+            lints: vec!(),
         }
     }
 
@@ -66,5 +72,9 @@ impl Registry {
                 expander: expander,
                 span: None,
             }, None));
+    }
+
+    pub fn register_lint(&mut self, lint: Lint) {
+        self.lints.push(lint);
     }
 }

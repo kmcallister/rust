@@ -45,6 +45,7 @@ use middle::ty;
 use middle::typeck::astconv::{ast_ty_to_ty, AstConv};
 use middle::typeck::infer;
 use middle::typeck;
+use plugin = plugin::lint;
 use util::ppaux::{ty_to_str};
 use util::nodemap::NodeSet;
 
@@ -124,6 +125,8 @@ pub enum Lint {
     Warnings,
 
     RawPointerDeriving,
+
+    LintPlugin,
 }
 
 pub fn level_to_str(lv: Level) -> &'static str {
@@ -451,6 +454,13 @@ static lint_table: &'static [(&'static str, LintSpec)] = &[
         desc: "uses of #[deriving] with raw pointers are rarely correct",
         default: Warn,
     }),
+
+    ("lint_plugin",
+     LintSpec {
+        lint: LintPlugin,
+        desc: "lints added by plugins",
+        default: Warn,
+    }),
 ];
 
 /*
@@ -461,7 +471,7 @@ pub fn get_lint_dict() -> LintDict {
     lint_table.iter().map(|&(k, v)| (k, v)).collect()
 }
 
-struct Context<'a> {
+pub struct Context<'a> {
     /// All known lint modes (string versions)
     dict: LintDict,
     /// Current levels of each lint warning
@@ -490,6 +500,9 @@ struct Context<'a> {
     /// Level of lints for certain NodeIds, stored here because the body of
     /// the lint needs to run in trans.
     node_levels: HashMap<(ast::NodeId, Lint), (Level, LintSource)>,
+
+    /// User-defined lint plugins.
+    plugins: Vec<plugin::Lint>,
 }
 
 pub fn emit_lint(level: Level, src: LintSource, msg: &str, span: Span,
@@ -568,7 +581,7 @@ impl<'a> Context<'a> {
         fail!("unregistered lint {}", lint);
     }
 
-    fn span_lint(&self, lint: Lint, span: Span, msg: &str) {
+    pub fn span_lint(&self, lint: Lint, span: Span, msg: &str) {
         let (level, src) = match self.cur.find(&(lint as uint)) {
             None => { return }
             Some(&(Warn, src)) => (self.get_level(Warnings), src),
@@ -1837,6 +1850,11 @@ impl<'a> Visitor<()> for Context<'a> {
             check_unused_attribute(cx, it.attrs.as_slice());
             check_raw_ptr_deriving(cx, it);
 
+            let pcx = plugin::Context::new(cx);
+            for p in cx.plugins.mut_iter() {
+                p.visit_item(it, pcx);
+            }
+
             cx.visit_ids(|v| v.visit_item(it, ()));
 
             visit::walk_item(cx, it, ());
@@ -1846,6 +1864,12 @@ impl<'a> Visitor<()> for Context<'a> {
     fn visit_foreign_item(&mut self, it: &ast::ForeignItem, _: ()) {
         self.with_lint_attrs(it.attrs.as_slice(), |cx| {
             check_attrs_usage(cx, it.attrs.as_slice());
+
+            let pcx = plugin::Context::new(cx);
+            for p in cx.plugins.mut_iter() {
+                p.visit_foreign_item(it, pcx);
+            }
+
             visit::walk_foreign_item(cx, it, ());
         })
     }
@@ -1853,6 +1877,11 @@ impl<'a> Visitor<()> for Context<'a> {
     fn visit_view_item(&mut self, i: &ast::ViewItem, _: ()) {
         self.with_lint_attrs(i.attrs.as_slice(), |cx| {
             check_attrs_usage(cx, i.attrs.as_slice());
+
+            let pcx = plugin::Context::new(cx);
+            for p in cx.plugins.mut_iter() {
+                p.visit_view_item(i, pcx);
+            }
 
             cx.visit_ids(|v| v.visit_view_item(i, ()));
 
@@ -1863,6 +1892,11 @@ impl<'a> Visitor<()> for Context<'a> {
     fn visit_pat(&mut self, p: &ast::Pat, _: ()) {
         check_pat_non_uppercase_statics(self, p);
         check_pat_uppercase_variable(self, p);
+
+        let pcx = plugin::Context::new(self);
+        for plg in self.plugins.mut_iter() {
+            plg.visit_pat(p, pcx);
+        }
 
         visit::walk_pat(self, p, ());
     }
@@ -1898,6 +1932,11 @@ impl<'a> Visitor<()> for Context<'a> {
         check_unused_casts(self, e);
         check_deprecated_owned_vector(self, e);
 
+        let pcx = plugin::Context::new(self);
+        for p in self.plugins.mut_iter() {
+            p.visit_expr(e, pcx);
+        }
+
         visit::walk_expr(self, e, ());
     }
 
@@ -1918,6 +1957,11 @@ impl<'a> Visitor<()> for Context<'a> {
             _ => {}
         }
 
+        let pcx = plugin::Context::new(self);
+        for p in self.plugins.mut_iter() {
+            p.visit_stmt(s, pcx);
+        }
+
         visit::walk_stmt(self, s, ());
     }
 
@@ -1929,6 +1973,11 @@ impl<'a> Visitor<()> for Context<'a> {
 
         for a in decl.inputs.iter(){
             check_unused_mut_pat(self, &[a.pat]);
+        }
+
+        let pcx = plugin::Context::new(self);
+        for p in self.plugins.mut_iter() {
+            p.visit_fn(fk, decl, body, span , id, pcx);
         }
 
         match *fk {
@@ -1963,17 +2012,27 @@ impl<'a> Visitor<()> for Context<'a> {
             check_attrs_usage(cx, t.attrs.as_slice());
             check_snake_case(cx, "trait method", t.ident, t.span);
 
+            let pcx = plugin::Context::new(cx);
+            for p in cx.plugins.mut_iter() {
+                p.visit_ty_method(t, pcx);
+            }
+
             visit::walk_ty_method(cx, t, ());
         })
     }
 
     fn visit_struct_def(&mut self,
                         s: &ast::StructDef,
-                        _: ast::Ident,
-                        _: &ast::Generics,
+                        ident: ast::Ident,
+                        gen: &ast::Generics,
                         id: ast::NodeId,
                         _: ()) {
         check_struct_uppercase_variable(self, s);
+
+        let pcx = plugin::Context::new(self);
+        for p in self.plugins.mut_iter() {
+            p.visit_struct_def(s, ident, gen, id, pcx);
+        }
 
         let old_id = self.cur_struct_def_id;
         self.cur_struct_def_id = id;
@@ -1986,6 +2045,11 @@ impl<'a> Visitor<()> for Context<'a> {
             check_missing_doc_struct_field(cx, s);
             check_attrs_usage(cx, s.node.attrs.as_slice());
 
+            let pcx = plugin::Context::new(cx);
+            for p in cx.plugins.mut_iter() {
+                p.visit_struct_field(s, pcx);
+            }
+
             visit::walk_struct_field(cx, s, ());
         })
     }
@@ -1994,6 +2058,11 @@ impl<'a> Visitor<()> for Context<'a> {
         self.with_lint_attrs(v.node.attrs.as_slice(), |cx| {
             check_missing_doc_variant(cx, v);
             check_attrs_usage(cx, v.node.attrs.as_slice());
+
+            let pcx = plugin::Context::new(cx);
+            for p in cx.plugins.mut_iter() {
+                p.visit_variant(v, g, pcx);
+            }
 
             visit::walk_variant(cx, v, g, ());
         })
@@ -2018,6 +2087,7 @@ impl<'a> IdVisitingOperation for Context<'a> {
 
 pub fn check_crate(tcx: &ty::ctxt,
                    exported_items: &privacy::ExportedItems,
+                   plugins: Vec<plugin::Lint>,
                    krate: &ast::Crate) {
     let mut cx = Context {
         dict: get_lint_dict(),
@@ -2030,6 +2100,7 @@ pub fn check_crate(tcx: &ty::ctxt,
         negated_expr_id: -1,
         checked_raw_pointers: NodeSet::new(),
         node_levels: HashMap::new(),
+        plugins: plugins,
     };
 
     // Install default lint levels, followed by the command line levels, and
