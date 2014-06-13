@@ -1559,11 +1559,11 @@ impl<'a> Liveness<'a> {
                 };
 
                 if is_assigned {
-                    self.ir.tcx.sess.add_lint(lint::builtin::unused_variable, id, sp,
+                    self.ir.tcx.sess.add_lint(lint::builtin::UNUSED_VARIABLE, id, sp,
                         format!("variable `{}` is assigned to, but never used",
                                 *name));
                 } else {
-                    self.ir.tcx.sess.add_lint(lint::builtin::unused_variable, id, sp,
+                    self.ir.tcx.sess.add_lint(lint::builtin::UNUSED_VARIABLE, id, sp,
                         format!("unused variable: `{}`", *name));
                 }
             }
