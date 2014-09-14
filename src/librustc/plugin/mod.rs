@@ -38,9 +38,6 @@
  * fn expand_mymacro(...) {  // details elided
  * ```
  *
- * WARNING: We currently don't check that the registrar function
- * has the appropriate type!
- *
  * To use a plugin while compiling another crate:
  *
  * ```rust

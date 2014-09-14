@@ -376,11 +376,6 @@ pub fn phase_3_run_analysis_passes<'tcx>(sess: Session,
     time(time_passes, "looking for entry point", (),
          |_| middle::entry::find_entry_point(&sess, &ast_map));
 
-    sess.plugin_registrar_fn.set(
-        time(time_passes, "looking for plugin registrar", (), |_|
-            plugin::build::find_plugin_registrar(
-                sess.diagnostic(), krate)));
-
     let (freevars, capture_modes) =
         time(time_passes, "freevar finding", (), |_|
              freevars::annotate_freevars(&def_map, krate));
@@ -453,6 +448,9 @@ pub fn phase_3_run_analysis_passes<'tcx>(sess: Session,
                                   &exported_items,
                                   &reachable_map)
     });
+
+    time(time_passes, "looking for plugin registrar", (), |_|
+        plugin::build::find_plugin_registrar(&ty_cx, krate));
 
     time(time_passes, "lint checking", (), |_|
          lint::check_crate(&ty_cx, &exported_items));
