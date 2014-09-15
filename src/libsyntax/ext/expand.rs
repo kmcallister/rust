@@ -15,6 +15,7 @@ use ast::TokenTree;
 use ast;
 use ext::mtwt;
 use ext::build::AstBuilder;
+use ext::tt::macro_rules;
 use attr;
 use attr::AttrMetaMethods;
 use codemap;
@@ -31,11 +32,6 @@ use visit;
 use visit::Visitor;
 
 use std::gc::Gc;
-
-enum Either<L,R> {
-    Left(L),
-    Right(R)
-}
 
 pub fn expand_expr(e: P<ast::Expr>, fld: &mut MacroExpander) -> P<ast::Expr> {
     e.and_then(|ast::Expr {id, node, span}| match node {
@@ -387,8 +383,8 @@ pub fn expand_item_mac(it: P<ast::Item>, fld: &mut MacroExpander)
 
     let extnamestr = token::get_ident(extname);
     let fm = fresh_mark();
-    let def_or_items = {
-        let mut expanded = match fld.cx.syntax_env.find(&extname.name) {
+    let items = {
+        let expanded = match fld.cx.syntax_env.find(&extname.name) {
             None => {
                 fld.cx.span_err(path_span,
                                 format!("macro undefined: '{}!'",
@@ -439,11 +435,9 @@ pub fn expand_item_mac(it: P<ast::Item>, fld: &mut MacroExpander)
                     let marked_tts = mark_tts(tts.as_slice(), fm);
                     expander.expand(fld.cx, it.span, it.ident, marked_tts)
                 }
-                LetSyntaxTT(ref expander, span) => {
+                MacroRulesTT => {
                     if it.ident.name == parse::token::special_idents::invalid.name {
-                        fld.cx.span_err(path_span,
-                                        format!("macro {}! expects an ident argument",
-                                                extnamestr.get()).as_slice());
+                        fld.cx.span_err(path_span, "macro_rules! expects an ident argument");
                         return SmallVector::zero();
                     }
                     fld.cx.bt_push(ExpnInfo {
@@ -451,11 +445,21 @@ pub fn expand_item_mac(it: P<ast::Item>, fld: &mut MacroExpander)
                         callee: NameAndSpan {
                             name: extnamestr.get().to_string(),
                             format: MacroBang,
-                            span: span
+                            span: None,
                         }
                     });
-                    // DON'T mark before expansion:
-                    expander.expand(fld.cx, it.span, it.ident, tts)
+                    // DON'T mark before expansion.
+                    let MacroDef { name, ext }
+                        = macro_rules::add_new_extension(fld.cx, it.span, it.ident, tts);
+
+                    fld.cx.syntax_env.insert(intern(name.as_slice()), ext);
+                    if attr::contains_name(it.attrs.as_slice(), "macro_export") {
+                        fld.cx.exported_macros.push(it);
+                    }
+
+                    // macro_rules! has a side effect but expands to nothing.
+                    fld.cx.bt_pop();
+                    return SmallVector::zero();
                 }
                 _ => {
                     fld.cx.span_err(it.span,
@@ -466,31 +470,17 @@ pub fn expand_item_mac(it: P<ast::Item>, fld: &mut MacroExpander)
             }
         };
 
-        match expanded.make_def() {
-            Some(def) => Left(def),
-            None => Right(expanded.make_items())
-        }
+        expanded.make_items()
     };
 
-    let items = match def_or_items {
-        Left(MacroDef { name, ext }) => {
-            // hidden invariant: this should only be possible as the
-            // result of expanding a LetSyntaxTT, and thus doesn't
-            // need to be marked. Not that it could be marked anyway.
-            // create issue to recommend refactoring here?
-            fld.cx.syntax_env.insert(intern(name.as_slice()), ext);
-            if attr::contains_name(it.attrs.as_slice(), "macro_export") {
-                fld.cx.exported_macros.push(it);
-            }
-            SmallVector::zero()
-        }
-        Right(Some(items)) => {
+    let items = match items {
+        Some(items) => {
             items.move_iter()
                 .map(|i| mark_item(i, fm))
                 .flat_map(|i| fld.fold_item(i).move_iter())
                 .collect()
         }
-        Right(None) => {
+        None => {
             fld.cx.span_err(path_span,
                             format!("non-item macro in item position: {}",
                                     extnamestr.get()).as_slice());

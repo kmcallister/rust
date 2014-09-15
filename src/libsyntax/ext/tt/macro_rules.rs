@@ -126,15 +126,6 @@ impl TTMacroExpander for MacroRulesMacroExpander {
     }
 }
 
-struct MacroRulesDefiner {
-    def: Option<MacroDef>
-}
-impl MacResult for MacroRulesDefiner {
-    fn make_def(&mut self) -> Option<MacroDef> {
-        Some(self.def.take().expect("empty MacroRulesDefiner"))
-    }
-}
-
 /// Given `lhses` and `rhses`, this is the new macro we create
 fn generic_extension<'cx>(cx: &'cx ExtCtxt,
                           sp: Span,
@@ -209,14 +200,12 @@ fn generic_extension<'cx>(cx: &'cx ExtCtxt,
     cx.span_fatal(best_fail_spot, best_fail_msg.as_slice());
 }
 
-/// This procedure performs the expansion of the
-/// macro_rules! macro. It parses the RHS and adds
-/// an extension to the current context.
-pub fn add_new_extension<'cx>(cx: &'cx mut ExtCtxt,
-                              sp: Span,
-                              name: Ident,
-                              arg: Vec<ast::TokenTree> )
-                              -> Box<MacResult+'cx> {
+/// This procedure implements the macro_rules! macro.
+/// It parses the RHS and returns a macro definition.
+pub fn add_new_extension(cx: &mut ExtCtxt,
+                         sp: Span,
+                         name: Ident,
+                         arg: Vec<ast::TokenTree>) -> MacroDef {
     // these spans won't matter, anyways
     fn ms(m: Matcher_) -> Matcher {
         Spanned {
@@ -268,10 +257,8 @@ pub fn add_new_extension<'cx>(cx: &'cx mut ExtCtxt,
         rhses: rhses,
     };
 
-    box MacroRulesDefiner {
-        def: Some(MacroDef {
-            name: token::get_ident(name).to_string(),
-            ext: NormalTT(exp, Some(sp))
-        })
-    } as Box<MacResult+'cx>
+    MacroDef {
+        name: token::get_ident(name).to_string(),
+        ext: NormalTT(exp, Some(sp))
+    }
 }
