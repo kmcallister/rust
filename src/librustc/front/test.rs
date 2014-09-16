@@ -232,6 +232,7 @@ fn generate_test_harness(sess: &Session,
                              ExpansionConfig {
                                  deriving_hash_type_parameter: false,
                                  crate_name: "test".to_string(),
+                                 reexported_macros: vec!(),
                              }),
         path: Vec::new(),
         testfns: Vec::new(),

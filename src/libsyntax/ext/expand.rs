@@ -455,7 +455,12 @@ pub fn expand_item_mac(it: P<ast::Item>,
                                                          imported_from, tts);
 
                     fld.cx.syntax_env.insert(intern(name.as_slice()), ext);
-                    if attr::contains_name(it.attrs.as_slice(), "macro_export") {
+
+                    if match imported_from {
+                        None => attr::contains_name(it.attrs.as_slice(), "macro_export"),
+                        Some(_) => fld.cx.ecfg.reexported_macros.iter()
+                                       .any(|e| e.as_slice() == name.as_slice()),
+                    } {
                         fld.cx.exported_macros.push(it);
                     }
 
@@ -968,6 +973,7 @@ fn new_span(cx: &ExtCtxt, sp: Span) -> Span {
 pub struct ExpansionConfig {
     pub deriving_hash_type_parameter: bool,
     pub crate_name: String,
+    pub reexported_macros: Vec<String>,
 }
 
 pub struct ExportedMacros {
@@ -1181,6 +1187,7 @@ mod test {
         ExpansionConfig {
             deriving_hash_type_parameter: false,
             crate_name: "test".to_string(),
+            reexported_macros: vec!(),
         }
     }
 
