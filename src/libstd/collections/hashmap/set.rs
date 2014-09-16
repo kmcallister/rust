@@ -20,7 +20,9 @@ use hash::{Hash, Hasher, RandomSipHasher};
 use iter::{Iterator, FromIterator, FilterMap, Chain, Repeat, Zip, Extendable};
 use iter;
 use option::{Some, None};
-use result::{Ok, Err};
+
+// NOTE: for old macros; remove after the next snapshot
+#[cfg(stage0)] use result::{Ok, Err};
 
 use super::{HashMap, Entries, MoveEntries, INITIAL_CAPACITY};
 

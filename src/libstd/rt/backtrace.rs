@@ -18,10 +18,13 @@ use io::{IoResult, Writer};
 use iter::Iterator;
 use option::{Some, None};
 use os;
-use result::{Ok, Err};
+use result::Ok;
 use str::StrSlice;
 use sync::atomic;
 use unicode::char::UnicodeChar;
+
+// NOTE: for old macros; remove after the next snapshot
+#[cfg(stage0)] use result::Err;
 
 pub use self::imp::write;
 

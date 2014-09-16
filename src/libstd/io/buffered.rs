@@ -18,10 +18,13 @@ use io::{Reader, Writer, Stream, Buffer, DEFAULT_BUF_SIZE, IoResult};
 use iter::ExactSize;
 use ops::Drop;
 use option::{Some, None, Option};
-use result::{Ok, Err};
+use result::Ok;
 use slice::{ImmutableSlice, MutableSlice};
 use slice;
 use vec::Vec;
+
+// NOTE: for old macros; remove after the next snapshot
+#[cfg(stage0)] use result::Err;
 
 /// Wraps a Reader and buffers input from it
 ///

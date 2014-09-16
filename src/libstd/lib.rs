@@ -117,6 +117,9 @@
 
 #![reexport_test_harness_main = "test_main"]
 
+#![macro_reexport(assert, assert_eq, debug_assert, debug_assert_eq,
+    unreachable, write, writeln, try, vec)]
+
 // When testing libstd, bring in libuv as the I/O backend so tests can print
 // things and all of the std::io tests have an I/O interface to run on top
 // of
@@ -126,10 +129,13 @@
 #[cfg(test)] extern crate debug;
 #[cfg(test)] #[phase(plugin, link)] extern crate log;
 
+#[phase(plugin, link)]
+extern crate core;
+#[phase(plugin, link)]
+extern crate "collections" as core_collections;
+
 extern crate alloc;
 extern crate unicode;
-extern crate core;
-extern crate "collections" as core_collections;
 extern crate "rand" as core_rand;
 extern crate "sync" as core_sync;
 extern crate libc;
@@ -197,6 +203,7 @@ fn start(argc: int, argv: *const *const u8) -> int {
 /* Exported macros */
 
 pub mod macros;
+#[cfg(stage0)] pub mod macros_stage0;
 pub mod bitflags;
 
 mod rtdeps;

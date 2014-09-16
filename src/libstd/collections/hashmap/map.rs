@@ -23,8 +23,10 @@ use mem::replace;
 use num;
 use ops::{Deref, DerefMut};
 use option::{Some, None, Option};
-use result::{Ok, Err};
 use ops::Index;
+
+// NOTE: for old macros; remove after the next snapshot
+#[cfg(stage0)] use result::{Ok, Err};
 
 use super::table;
 use super::table::{

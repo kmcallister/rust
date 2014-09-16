@@ -136,6 +136,7 @@ pub mod fmt;
 #[doc(hidden)]
 mod core {
     pub use failure;
+    pub use fmt;
 }
 
 #[doc(hidden)]

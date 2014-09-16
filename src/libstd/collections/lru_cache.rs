@@ -47,7 +47,9 @@ use ops::Drop;
 use option::{Some, None, Option};
 use boxed::Box;
 use ptr;
-use result::{Ok, Err};
+
+// NOTE: for old macros; remove after the next snapshot
+#[cfg(stage0)] use result::{Ok, Err};
 
 struct KeyRef<K> { k: *const K }
 

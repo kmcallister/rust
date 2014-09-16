@@ -14,7 +14,7 @@
 #[macro_export]
 macro_rules! fail(
     () => (
-        fail!("{}", "explicit failure")
+        fail!("explicit failure")
     );
     ($msg:expr) => ({
         static _FILE_LINE: (&'static str, uint) = (file!(), line!());
@@ -38,7 +38,7 @@ macro_rules! fail(
         // insufficient, since the user may have
         // `#[forbid(dead_code)]` and which cannot be overridden.
         #[inline(always)]
-        fn _run_fmt(fmt: &::std::fmt::Arguments) -> ! {
+        fn _run_fmt(fmt: &::core::fmt::Arguments) -> ! {
             static _FILE_LINE: (&'static str, uint) = (file!(), line!());
             ::core::failure::begin_unwind(fmt, &_FILE_LINE)
         }
@@ -46,7 +46,54 @@ macro_rules! fail(
     });
 )
 
-/// Runtime assertion, for details see std::macros
+/// A utility macro for indicating unreachable code. It will fail if
+/// executed. This is occasionally useful to put after loops that never
+/// terminate normally, but instead directly return from a function.
+///
+/// # Example
+///
+/// ~~~rust
+/// struct Item { weight: uint }
+///
+/// fn choose_weighted_item(v: &[Item]) -> Item {
+///     assert!(!v.is_empty());
+///     let mut so_far = 0u;
+///     for item in v.iter() {
+///         so_far += item.weight;
+///         if so_far > 100 {
+///             return *item;
+///         }
+///     }
+///     // The above loop always returns, so we must hint to the
+///     // type checker that it isn't possible to get down here
+///     unreachable!();
+/// }
+/// ~~~
+#[macro_export]
+macro_rules! unreachable(
+    () => (fail!("internal error: entered unreachable code"))
+)
+
+/// Ensure that a boolean expression is `true` at runtime.
+///
+/// This will invoke the `fail!` macro if the provided expression cannot be
+/// evaluated to `true` at runtime.
+///
+/// # Example
+///
+/// ```
+/// // the failure message for these assertions is the stringified value of the
+/// // expression given.
+/// assert!(true);
+/// # fn some_computation() -> bool { true }
+/// assert!(some_computation());
+///
+/// // assert with a custom message
+/// # let x = true;
+/// assert!(x, "x wasn't true!");
+/// # let a = 3i; let b = 27i;
+/// assert!(a + b == 30, "a = {}, b = {}", a, b);
+/// ```
 #[macro_export]
 macro_rules! assert(
     ($cond:expr) => (
@@ -54,74 +101,125 @@ macro_rules! assert(
             fail!(concat!("assertion failed: ", stringify!($cond)))
         }
     );
-    ($cond:expr, $($arg:tt)*) => (
+    ($cond:expr, $($arg:expr),+) => (
         if !$cond {
-            fail!($($arg)*)
+            fail!($($arg),+)
         }
     );
 )
 
-/// Runtime assertion, only without `--cfg ndebug`
-#[macro_export]
-macro_rules! debug_assert(
-    ($(a:tt)*) => ({
-        if cfg!(not(ndebug)) {
-            assert!($($a)*);
-        }
-    })
-)
-
-/// Runtime assertion for equality, for details see std::macros
-#[macro_export]
-macro_rules! assert_eq(
-    ($cond1:expr, $cond2:expr) => ({
-        let c1 = $cond1;
-        let c2 = $cond2;
-        if c1 != c2 || c2 != c1 {
-            fail!("expressions not equal, left: {}, right: {}", c1, c2);
-        }
-    })
-)
-
-/// Runtime assertion for equality, only without `--cfg ndebug`
-#[macro_export]
-macro_rules! debug_assert_eq(
-    ($($a:tt)*) => ({
-        if cfg!(not(ndebug)) {
-            assert_eq!($($a)*);
-        }
-    })
-)
-
-/// Runtime assertion, disableable at compile time
+/// Ensure that a boolean expression is `true` at runtime.
+///
+/// This will invoke the `fail!` macro if the provided expression cannot be
+/// evaluated to `true` at runtime.
+///
+/// Unlike `assert!`, `debug_assert!` statements can be disabled by passing
+/// `--cfg ndebug` to the compiler. This makes `debug_assert!` useful for
+/// checks that are too expensive to be present in a release build but may be
+/// helpful during development.
+///
+/// # Example
+///
+/// ```
+/// // the failure message for these assertions is the stringified value of the
+/// // expression given.
+/// debug_assert!(true);
+/// # fn some_expensive_computation() -> bool { true }
+/// debug_assert!(some_expensive_computation());
+///
+/// // assert with a custom message
+/// # let x = true;
+/// debug_assert!(x, "x wasn't true!");
+/// # let a = 3i; let b = 27i;
+/// debug_assert!(a + b == 30, "a = {}, b = {}", a, b);
+/// ```
 #[macro_export]
 macro_rules! debug_assert(
     ($($arg:tt)*) => (if cfg!(not(ndebug)) { assert!($($arg)*); })
 )
 
-/// Short circuiting evaluation on Err
+/// Asserts that two expressions are equal to each other, testing equality in
+/// both directions.
+///
+/// On failure, this macro will print the values of the expressions.
+///
+/// # Example
+///
+/// ```
+/// let a = 3i;
+/// let b = 1i + 2i;
+/// assert_eq!(a, b);
+/// ```
+#[macro_export]
+macro_rules! assert_eq(
+    ($given:expr , $expected:expr) => ({
+        match (&($given), &($expected)) {
+            (given_val, expected_val) => {
+                // check both directions of equality....
+                if !((*given_val == *expected_val) &&
+                     (*expected_val == *given_val)) {
+                    fail!("assertion failed: `(left == right) && (right == left)` \
+                           (left: `{}`, right: `{}`)", *given_val, *expected_val)
+                }
+            }
+        }
+    })
+)
+
+/// Asserts that two expressions are equal to each other, testing equality in
+/// both directions.
+///
+/// On failure, this macro will print the values of the expressions.
+///
+/// Unlike `assert_eq!`, `debug_assert_eq!` statements can be disabled by
+/// passing `--cfg ndebug` to the compiler. This makes `debug_assert_eq!`
+/// useful for checks that are too expensive to be present in a release build
+/// but may be helpful during development.
+///
+/// # Example
+///
+/// ```
+/// let a = 3i;
+/// let b = 1i + 2i;
+/// debug_assert_eq!(a, b);
+/// ```
+#[macro_export]
+macro_rules! debug_assert_eq(
+    ($($arg:tt)*) => (if cfg!(not(ndebug)) { assert_eq!($($arg)*); })
+)
+
+// NOTE: remove after the next snapshot
+#[cfg(stage0)]
 #[macro_export]
 macro_rules! try(
     ($e:expr) => (match $e { Ok(e) => e, Err(e) => return Err(e) })
 )
 
-/// Writing a formatted string into a writer
+/// Helper macro for unwrapping `Result` values while returning early with an
+/// error if the value of the expression is `Err`. For more information, see
+/// `std::io`.
+#[cfg(not(stage0))]
 #[macro_export]
-macro_rules! write(
-    ($dst:expr, $($arg:tt)*) => (format_args_method!($dst, write_fmt, $($arg)*))
+macro_rules! try(
+    ($e:expr) => (match $e {
+        $crate::result::Ok(e) => e,
+        $crate::result::Err(e) => return $crate::result::Err(e)
+    })
 )
 
-/// Writing a formatted string plus a newline into a writer
-#[macro_export]
-macro_rules! writeln(
-    ($dst:expr, $fmt:expr $($arg:tt)*) => (
-        write!($dst, concat!($fmt, "\n") $($arg)*)
-    )
-)
-
-/// Write some formatted data into a stream.
+/// Use the `format!` syntax to write data into a buffer of type `&mut Writer`.
+/// See `std::fmt` for more information.
 ///
-/// Identical to the macro in `std::macros`
+/// # Example
+///
+/// ```
+/// # #![allow(unused_must_use)]
+/// use std::io::MemWriter;
+///
+/// let mut w = MemWriter::new();
+/// write!(&mut w, "test");
+/// write!(&mut w, "formatted {}", "arguments");
+/// ```
 #[macro_export]
 macro_rules! write(
     ($dst:expr, $($arg:tt)*) => ({
@@ -129,5 +227,11 @@ macro_rules! write(
     })
 )
 
+/// Equivalent to the `write!` macro, except that a newline is appended after
+/// the message is written.
 #[macro_export]
-macro_rules! unreachable( () => (fail!("unreachable code")) )
+macro_rules! writeln(
+    ($dst:expr, $fmt:expr $($arg:tt)*) => (
+        write!($dst, concat!($fmt, "\n") $($arg)*)
+    )
+)

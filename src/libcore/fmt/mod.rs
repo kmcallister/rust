@@ -20,12 +20,15 @@ use kinds::Copy;
 use mem;
 use option::{Option, Some, None};
 use ops::Deref;
-use result::{Ok, Err};
+use result::Ok;
 use result;
 use slice::{Slice, ImmutableSlice};
 use slice;
 use str::StrSlice;
 use str;
+
+// NOTE: for old macros; remove after the next snapshot
+#[cfg(stage0)] use result::Err;
 
 pub use self::num::radix;
 pub use self::num::Radix;

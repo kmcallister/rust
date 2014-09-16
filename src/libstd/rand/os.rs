@@ -19,7 +19,10 @@ mod imp {
     use path::Path;
     use rand::Rng;
     use rand::reader::ReaderRng;
-    use result::{Ok, Err};
+    use result::Ok;
+
+    // NOTE: for old macros; remove after the next snapshot
+    #[cfg(stage0)] use result::Err;
 
     /// A random number generator that retrieves randomness straight from
     /// the operating system. Platform sources:
