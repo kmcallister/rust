@@ -1007,6 +1007,9 @@ impl<'a> State<'a> {
                 try!(word(&mut self.s, "$"));
                 self.print_ident(name)
             }
+            ast::TTCrateNonterminal(_) => {
+                word(&mut self.s, "$crate")
+            }
         }
     }
 

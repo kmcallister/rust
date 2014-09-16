@@ -49,7 +49,7 @@ use ast::{StructVariantKind, BiSub};
 use ast::StrStyle;
 use ast::{SelfExplicit, SelfRegion, SelfStatic, SelfValue};
 use ast::{TokenTree, TraitItem, TraitRef, TTDelim, TTSeq, TTTok};
-use ast::{TTNonterminal, TupleVariantKind, Ty, Ty_, TyBot, TyBox};
+use ast::{TTNonterminal, TTCrateNonterminal, TupleVariantKind, Ty, Ty_, TyBot, TyBox};
 use ast::{TypeField, TyFixedLengthVec, TyClosure, TyProc, TyBareFn};
 use ast::{TyTypeof, TyInfer, TypeMethod};
 use ast::{TyNil, TyParam, TyParamBound, TyParen, TyPath, TyPtr, TyRptr};
@@ -2436,6 +2436,9 @@ impl<'a> Parser<'a> {
                         Spanned { node, .. } => node,
                     };
                     TTSeq(mk_sp(sp.lo, p.span.hi), Rc::new(seq), s, z)
+                } else if token::is_keyword_allow_following_colon(keywords::Crate, &p.token) {
+                    p.bump();
+                    TTCrateNonterminal(sp)
                 } else {
                     TTNonterminal(sp, p.parse_ident())
                 }

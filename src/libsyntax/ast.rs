@@ -594,7 +594,11 @@ pub enum TokenTree {
     TTSeq(Span, Rc<Vec<TokenTree>>, Option<::parse::token::Token>, bool),
 
     /// A syntactic variable that will be filled in by macro expansion.
-    TTNonterminal(Span, Ident)
+    TTNonterminal(Span, Ident),
+
+    /// A syntactic variable that will be filled in with the name of
+    /// the crate a macro was imported from, if any.
+    TTCrateNonterminal(Span),
 }
 
 // Matchers are nodes defined-by and recognized-by the main rust parser and

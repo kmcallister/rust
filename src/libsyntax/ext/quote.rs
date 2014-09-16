@@ -674,6 +674,9 @@ fn mk_tt(cx: &ExtCtxt, sp: Span, tt: &ast::TokenTree) -> Vec<P<ast::Stmt>> {
 
             vec!(cx.stmt_expr(e_push))
         }
+
+        ast::TTCrateNonterminal(sp)
+            => cx.span_fatal(sp, "can't use $crate in procedural quotes"),
     }
 }
 

@@ -9,11 +9,11 @@
 // except according to those terms.
 
 use ast;
-use ast::{TokenTree, TTDelim, TTTok, TTSeq, TTNonterminal, Ident};
+use ast::{TokenTree, TTDelim, TTTok, TTSeq, TTNonterminal, TTCrateNonterminal, Ident};
 use codemap::{Span, DUMMY_SP};
 use diagnostic::SpanHandler;
 use ext::tt::macro_parser::{NamedMatch, MatchedSeq, MatchedNonterminal};
-use parse::token::{EOF, INTERPOLATED, IDENT, Token, NtIdent};
+use parse::token::{EOF, INTERPOLATED, IDENT, MOD_SEP, Token, NtIdent};
 use parse::token;
 use parse::lexer::TokenAndSpan;
 
@@ -36,6 +36,10 @@ pub struct TtReader<'a> {
     stack: Vec<TtFrame>,
     /* for MBE-style macro transcription */
     interpolations: HashMap<Ident, Rc<NamedMatch>>,
+    imported_from: Option<Ident>,
+
+    // Some => return imported_from as the next token
+    crate_name_next: Option<Span>,
     repeat_idx: Vec<uint>,
     repeat_len: Vec<uint>,
     /* cached: */
@@ -48,6 +52,7 @@ pub struct TtReader<'a> {
 /// should) be none.
 pub fn new_tt_reader<'a>(sp_diag: &'a SpanHandler,
                          interp: Option<HashMap<Ident, Rc<NamedMatch>>>,
+                         imported_from: Option<Ident>,
                          src: Vec<ast::TokenTree> )
                          -> TtReader<'a> {
     let mut r = TtReader {
@@ -62,6 +67,8 @@ pub fn new_tt_reader<'a>(sp_diag: &'a SpanHandler,
             None => HashMap::new(),
             Some(x) => x,
         },
+        imported_from: imported_from,
+        crate_name_next: None,
         repeat_idx: Vec::new(),
         repeat_len: Vec::new(),
         /* dummy values, never read: */
@@ -130,7 +137,7 @@ fn lockstep_iter_size(t: &TokenTree, r: &TtReader) -> LockstepIterSize {
                 lis_merge(lis, lockstep_iter_size(tt, r))
             })
         }
-        TTTok(..) => LisUnconstrained,
+        TTTok(..) | TTCrateNonterminal(..) => LisUnconstrained,
         TTNonterminal(_, name) => match *lookup_cur_matched(r, name) {
             MatchedNonterminal(_) => LisUnconstrained,
             MatchedSeq(ref ads, _) => LisConstraint(ads.len(), name)
@@ -147,6 +154,14 @@ pub fn tt_next_token(r: &mut TtReader) -> TokenAndSpan {
         sp: r.cur_span.clone(),
     };
     loop {
+        match r.crate_name_next.take() {
+            None => (),
+            Some(sp) => {
+                r.cur_span = sp;
+                r.cur_tok = IDENT(r.imported_from.unwrap(), true);
+                return ret_val;
+            },
+        }
         let should_pop = match r.stack.last() {
             None => {
                 assert_eq!(ret_val.tok, EOF);
@@ -273,6 +288,18 @@ pub fn tt_next_token(r: &mut TtReader) -> TokenAndSpan {
                                     token::get_ident(ident)).as_slice());
                     }
                 }
+            }
+            TTCrateNonterminal(sp) => {
+                r.stack.mut_last().unwrap().idx += 1;
+
+                if r.imported_from.is_some() {
+                    r.cur_span = sp;
+                    r.cur_tok = MOD_SEP;
+                    r.crate_name_next = Some(sp);
+                    return ret_val;
+                }
+
+                // otherwise emit nothing and proceed to the next token
             }
         }
     }

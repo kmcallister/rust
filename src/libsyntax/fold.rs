@@ -563,7 +563,8 @@ pub fn noop_fold_tt<T: Folder>(tt: &TokenTree, fld: &mut T) -> TokenTree {
                   sep.clone().map(|tok| fld.fold_token(tok)),
                   is_optional),
         TTNonterminal(sp,ref ident) =>
-            TTNonterminal(sp,fld.fold_ident(*ident))
+            TTNonterminal(sp,fld.fold_ident(*ident)),
+        TTCrateNonterminal(sp) => TTCrateNonterminal(sp),
     }
 }
 

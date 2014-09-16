@@ -706,6 +706,13 @@ pub fn is_keyword(kw: keywords::Keyword, tok: &Token) -> bool {
     }
 }
 
+pub fn is_keyword_allow_following_colon(kw: keywords::Keyword, tok: &Token) -> bool {
+    match *tok {
+        token::IDENT(sid, _) => { kw.to_name() == sid.name }
+        _ => { false }
+    }
+}
+
 pub fn is_any_keyword(tok: &Token) -> bool {
     match *tok {
         token::IDENT(sid, false) => {
