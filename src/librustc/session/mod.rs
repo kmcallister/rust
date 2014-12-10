@@ -29,6 +29,8 @@ use std::cell::{Cell, RefCell};
 
 pub mod config;
 
+pub type SavedLints = NodeMap<Vec<(lint::LintId, codemap::Span, String)>>;
+
 // Represents the data associated with a compilation
 // session for a single crate.
 pub struct Session {
@@ -46,7 +48,9 @@ pub struct Session {
     pub local_crate_source_file: Option<Path>,
     pub working_dir: Path,
     pub lint_store: RefCell<lint::LintStore>,
-    pub lints: RefCell<NodeMap<Vec<(lint::LintId, codemap::Span, String)>>>,
+    // Lint messages stored during earlier compiler phases, to be emitted during the lint phase.
+    // None means that this has already happened.
+    pub lints: RefCell<Option<SavedLints>>,
     pub crate_types: RefCell<Vec<config::CrateType>>,
     pub crate_metadata: RefCell<Vec<String>>,
     pub features: RefCell<feature_gate::Features>,
@@ -147,6 +151,11 @@ impl Session {
                     msg: String) {
         let lint_id = lint::LintId::of(lint);
         let mut lints = self.lints.borrow_mut();
+        let mut lints = match *lints.deref_mut() {
+            Some(ref mut lints) => lints,
+            None => self.bug("add_lint called after lint pass"),
+        };
+
         match lints.get_mut(&id) {
             Some(arr) => { arr.push((lint_id, sp, msg)); return; }
             None => {}
@@ -275,7 +284,7 @@ pub fn build_session_(sopts: config::Options,
         local_crate_source_file: local_crate_source_file,
         working_dir: os::getcwd().unwrap(),
         lint_store: RefCell::new(lint::LintStore::new()),
-        lints: RefCell::new(NodeMap::new()),
+        lints: RefCell::new(Some(NodeMap::new())),
         crate_types: RefCell::new(Vec::new()),
         crate_metadata: RefCell::new(Vec::new()),
         features: RefCell::new(feature_gate::Features::new()),

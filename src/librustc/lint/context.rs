@@ -711,13 +711,14 @@ impl<'a, 'tcx, 'v> Visitor<'v> for Context<'a, 'tcx> {
 // Output any lints that were previously added to the session.
 impl<'a, 'tcx> IdVisitingOperation for Context<'a, 'tcx> {
     fn visit_id(&mut self, id: ast::NodeId) {
-        match self.tcx.sess.lints.borrow_mut().remove(&id) {
-            None => {}
-            Some(lints) => {
-                for (lint_id, span, msg) in lints.into_iter() {
+        let mut lints = self.tcx.sess.lints.borrow_mut();
+        match *lints.deref_mut() {
+            None => self.tcx.sess.bug("reading stored lints after lint pass"),
+            Some(ref mut lints) => if let Some(msgs) = lints.remove(&id) {
+                for (lint_id, span, msg) in msgs.into_iter() {
                     self.span_lint(lint_id.lint, span, msg.as_slice())
                 }
-            }
+            },
         }
     }
 }
@@ -775,15 +776,28 @@ pub fn check_crate(tcx: &ty::ctxt,
         visit::walk_crate(cx, krate);
     });
 
+    let mut lints = tcx.sess.lints.borrow_mut();
+
     // If we missed any lints added to the session, then there's a bug somewhere
     // in the iteration code.
-    for (id, v) in tcx.sess.lints.borrow().iter() {
-        for &(lint, span, ref msg) in v.iter() {
-            tcx.sess.span_bug(span,
-                              format!("unprocessed lint {} at {}: {}",
-                                      lint.as_str(), tcx.map.node_to_string(*id), *msg).as_slice())
+    match *lints {
+        None => tcx.sess.bug("reading stored lints after lint pass"),
+        Some(ref lints) => {
+            for (id, v) in lints.iter() {
+                for &(lint, span, ref msg) in v.iter() {
+                    tcx.sess.span_bug(span,
+                                      format!("unprocessed lint {} at {}: {}",
+                                              lint.as_str(),
+                                              tcx.map.node_to_string(*id),
+                                              *msg).as_slice());
+                }
+            }
         }
     }
+
+    // We're done with the list, which is confirmed to be empty. Future calls
+    // to Session::add_lint will not work, and we want them to call bug().
+    *lints = None;
 
     tcx.sess.abort_if_errors();
     *tcx.node_lint_levels.borrow_mut() = cx.node_levels.into_inner();
