@@ -648,8 +648,8 @@ pub fn noop_fold_token<T: Folder>(t: token::Token, fld: &mut T) -> token::Token 
         token::SubstNt(ident, namep) => {
             token::SubstNt(fld.fold_ident(ident), namep)
         }
-        token::MatchNt(name, kind, namep, kindp) => {
-            token::MatchNt(fld.fold_ident(name), fld.fold_ident(kind), namep, kindp)
+        token::MatchNt(name, style, frag_spec) => {
+            token::MatchNt(fld.fold_ident(name), style, frag_spec)
         }
         _ => t
     }

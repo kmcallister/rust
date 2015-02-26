@@ -70,7 +70,7 @@ use parse::classify;
 use parse::common::{SeqSep, seq_sep_none, seq_sep_trailing_allowed};
 use parse::lexer::{Reader, TokenAndSpan};
 use parse::obsolete::{ParserObsoleteMethods, ObsoleteSyntax};
-use parse::token::{self, MatchNt, SubstNt, SpecialVarNt, InternedString};
+use parse::token::{self, SubstNt, SpecialVarNt, InternedString};
 use parse::token::{keywords, special_idents, SpecialMacroVar};
 use parse::{new_sub_parser_from_file, ParseSess};
 use print::pprust;
@@ -2612,7 +2612,7 @@ impl<'a> Parser<'a> {
     // Parse unquoted tokens after a `$` in a token tree
     fn parse_unquoted(&mut self) -> TokenTree {
         let mut sp = self.span;
-        let (name, namep) = match self.token {
+        let (name, style) = match self.token {
             token::Dollar => {
                 self.bump();
 
@@ -2637,29 +2637,20 @@ impl<'a> Parser<'a> {
                     return TtToken(sp, SpecialVarNt(SpecialMacroVar::CrateMacroVar));
                 } else {
                     sp = mk_sp(sp.lo, self.span.hi);
-                    let namep = match self.token { token::Ident(_, p) => p, _ => token::Plain };
+                    let style = match self.token { token::Ident(_, p) => p, _ => token::Plain };
                     let name = self.parse_ident();
-                    (name, namep)
+                    (name, style)
                 }
             }
-            token::SubstNt(name, namep) => {
+            token::SubstNt(name, style) => {
                 self.bump();
-                (name, namep)
+                (name, style)
             }
             _ => unreachable!()
         };
-        // continue by trying to parse the `:ident` after `$name`
-        if self.token == token::Colon && self.look_ahead(1, |t| t.is_ident() &&
-                                                                !t.is_strict_keyword() &&
-                                                                !t.is_reserved_keyword()) {
-            self.bump();
-            sp = mk_sp(sp.lo, self.span.hi);
-            let kindp = match self.token { token::Ident(_, p) => p, _ => token::Plain };
-            let nt_kind = self.parse_ident();
-            TtToken(sp, MatchNt(name, nt_kind, namep, kindp))
-        } else {
-            TtToken(sp, SubstNt(name, namep))
-        }
+        // It's too early to know if this would be an appropriate place for a MatchNt.
+        // The macro_rules parser applies that transformation to the macro LHS only.
+        TtToken(sp, SubstNt(name, style))
     }
 
     pub fn check_unknown_macro_variable(&mut self) {

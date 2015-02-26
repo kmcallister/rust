@@ -9,24 +9,24 @@
 // except according to those terms.
 
 use ast::{self, TokenTree, TtDelimited, TtSequence, TtToken};
+use attr;
 use codemap::{Span, DUMMY_SP};
+use diagnostic::SpanHandler;
 use ext::base::{ExtCtxt, MacResult, SyntaxExtension};
 use ext::base::{NormalTT, TTMacroExpander};
-use ext::tt::macro_parser::{Success, Error, Failure};
-use ext::tt::macro_parser::{NamedMatch, MatchedSeq, MatchedNonterminal};
-use ext::tt::macro_parser::{parse, parse_or_else};
+use ext::tt::macro_parser::{self, Success, Error, Failure};
+use fold::{self, Folder};
 use parse::lexer::{new_tt_reader, new_tt_reader_with_doc_flag};
 use parse::parser::Parser;
 use parse::attr::ParserAttr;
-use parse::token::{self, special_idents, gensym_ident, NtTT, Token};
+use parse::token::{self, Token, FragSpec};
 use parse::token::Token::*;
-use print;
+use print::pprust;
 use ptr::P;
 
 use util::small_vector::SmallVector;
 
 use std::cell::RefCell;
-use std::rc::Rc;
 
 struct ParserAnyMacro<'a> {
     parser: RefCell<Parser<'a>>,
@@ -108,8 +108,8 @@ impl<'a> MacResult for ParserAnyMacro<'a> {
 struct MacroRulesMacroExpander {
     name: ast::Ident,
     imported_from: Option<ast::Ident>,
-    lhses: Vec<Rc<NamedMatch>>,
-    rhses: Vec<Rc<NamedMatch>>,
+    lhses: Vec<TokenTree>,
+    rhses: Vec<TokenTree>,
 }
 
 impl TTMacroExpander for MacroRulesMacroExpander {
@@ -134,46 +134,38 @@ fn generic_extension<'cx>(cx: &'cx ExtCtxt,
                           name: ast::Ident,
                           imported_from: Option<ast::Ident>,
                           arg: &[ast::TokenTree],
-                          lhses: &[Rc<NamedMatch>],
-                          rhses: &[Rc<NamedMatch>])
+                          lhses: &[TokenTree],
+                          rhses: &[TokenTree])
                           -> Box<MacResult+'cx> {
     if cx.trace_macros() {
         println!("{}! {{ {} }}",
                  token::get_ident(name),
-                 print::pprust::tts_to_string(arg));
+                 pprust::tts_to_string(arg));
     }
 
     // Which arm's failure should we report? (the one furthest along)
     let mut best_fail_spot = DUMMY_SP;
     let mut best_fail_msg = "internal error: ran no matchers".to_string();
 
-    for (i, lhs) in lhses.iter().enumerate() { // try each arm's matchers
-        match **lhs {
-          MatchedNonterminal(NtTT(ref lhs_tt)) => {
-            let lhs_tt = match **lhs_tt {
-                TtDelimited(_, ref delim) => &delim.tts[..],
-                _ => cx.span_fatal(sp, "malformed macro lhs")
-            };
-            // `None` is because we're not interpolating
-            let arg_rdr = new_tt_reader_with_doc_flag(&cx.parse_sess().span_diagnostic,
-                                                      None,
-                                                      None,
-                                                      arg.iter()
-                                                         .cloned()
-                                                         .collect(),
-                                                      true);
-            match parse(cx.parse_sess(), cx.cfg(), arg_rdr, lhs_tt) {
-              Success(named_matches) => {
-                let rhs = match *rhses[i] {
-                    // okay, what's your transcriber?
-                    MatchedNonterminal(NtTT(ref tt)) => {
-                        match **tt {
-                            // ignore delimiters
-                            TtDelimited(_, ref delimed) => delimed.tts.clone(),
-                            _ => cx.span_fatal(sp, "macro rhs must be delimited"),
-                        }
-                    },
-                    _ => cx.span_bug(sp, "bad thing in rhs")
+    for (i, lhs_tt) in lhses.iter().enumerate() { // try each arm's matchers
+        let lhs_tt = match *lhs_tt {
+            TtDelimited(_, ref delim) => &delim.tts[..],
+            _ => cx.span_fatal(sp, "malformed macro lhs")
+        };
+        // `None` is because we're not interpolating
+        let arg_rdr = new_tt_reader_with_doc_flag(&cx.parse_sess().span_diagnostic,
+                                                  None,
+                                                  None,
+                                                  arg.iter()
+                                                     .cloned()
+                                                     .collect(),
+                                                  true);
+        match macro_parser::parse(cx.parse_sess(), cx.cfg(), arg_rdr, lhs_tt) {
+            Success(named_matches) => {
+                let rhs = match rhses[i] {
+                    // ignore delimiters
+                    TtDelimited(_, ref delimed) => delimed.tts.clone(),
+                    _ => cx.span_fatal(sp, "macro rhs must be delimited"),
                 };
                 // rhs has holes ( `$id` and `$(...)` that need filled)
                 let trncbr = new_tt_reader(&cx.parse_sess().span_diagnostic,
@@ -187,113 +179,187 @@ fn generic_extension<'cx>(cx: &'cx ExtCtxt,
                 return box ParserAnyMacro {
                     parser: RefCell::new(p),
                 } as Box<MacResult+'cx>
-              }
-              Failure(sp, ref msg) => if sp.lo >= best_fail_spot.lo {
+            }
+            Failure(sp, ref msg) => if sp.lo >= best_fail_spot.lo {
                 best_fail_spot = sp;
                 best_fail_msg = (*msg).clone();
-              },
-              Error(sp, ref msg) => cx.span_fatal(sp, &msg[..])
-            }
-          }
-          _ => cx.bug("non-matcher found in parsed lhses")
+            },
+            Error(sp, ref msg) => cx.span_fatal(sp, &msg[..]),
         }
     }
     cx.span_fatal(best_fail_spot, &best_fail_msg[..]);
 }
 
-// Note that macro-by-example's input is also matched against a token tree:
-//                   $( $lhs:tt => $rhs:tt );+
-//
-// Holy self-referential!
+/// Turns a LHS token tree into a matcher.
+///
+/// This does the `SubstNt` -> `MatchNt` translation.
+///
+/// FIXME: Give matchers their own AST / token tree type.
+struct MatchNtFolder<'a> {
+    hdl: &'a SpanHandler,
+}
 
-/// Converts a `macro_rules!` invocation into a syntax extension.
-pub fn compile<'cx>(cx: &'cx mut ExtCtxt,
-                    def: &ast::MacroDef) -> SyntaxExtension {
+impl<'a> fold::Folder for MatchNtFolder<'a> {
+    fn fold_tts(&mut self, tts: &[TokenTree]) -> Vec<TokenTree> {
+        macro_rules! bail {
+            ($sp:expr, $($msg:expr),*) => {{
+                self.hdl.span_err($sp, $($msg),*);
+                return vec![];
+            }}
+        }
 
-    let lhs_nm =  gensym_ident("lhs");
-    let rhs_nm =  gensym_ident("rhs");
+        use std::iter::IntoIterator;
 
-    // The pattern that macro_rules matches.
-    // The grammar for macro_rules! is:
-    // $( $lhs:tt => $rhs:tt );+
-    // ...quasiquoting this would be nice.
-    // These spans won't matter, anyways
-    let match_lhs_tok = MatchNt(lhs_nm, special_idents::tt, token::Plain, token::Plain);
-    let match_rhs_tok = MatchNt(rhs_nm, special_idents::tt, token::Plain, token::Plain);
-    let argument_gram = vec!(
-        TtSequence(DUMMY_SP,
-                   Rc::new(ast::SequenceRepetition {
-                       tts: vec![
-                           TtToken(DUMMY_SP, match_lhs_tok),
-                           TtToken(DUMMY_SP, token::FatArrow),
-                           TtToken(DUMMY_SP, match_rhs_tok)],
-                       separator: Some(token::Semi),
-                       op: ast::OneOrMore,
-                       num_captures: 2
-                   })),
-        //to phase into semicolon-termination instead of
-        //semicolon-separation
-        TtSequence(DUMMY_SP,
-                   Rc::new(ast::SequenceRepetition {
-                       tts: vec![TtToken(DUMMY_SP, token::Semi)],
-                       separator: None,
-                       op: ast::ZeroOrMore,
-                       num_captures: 0
-                   })));
+        let mut out = Vec::with_capacity(tts.len());
+        let mut tt_iter = tts.into_iter();
 
+        loop {
+            match tt_iter.next() {
+                // Convert `$x : frag_spec` to a `MatchNt`.
+                Some(&TtToken(sp1, SubstNt(id, sty))) => match tt_iter.next() {
+                    Some(&TtToken(sp2, Colon)) => match tt_iter.next() {
+                        Some(&TtToken(sp3, Ident(fid, _))) => match FragSpec::from_ident(fid) {
+                            Some(frag) => {
+                                // Congrats, you've reached the top of the mountain.
+                                // FIXME: Take the union of sp1 - sp3.
+                                out.push(TtToken(sp1, MatchNt(id, sty, frag)));
+                            }
+                            None => {
+                                self.hdl.span_err(sp3, "expected macro fragment specifier");
+                                self.hdl.span_help(sp3, FragSpec::help());
+                                return vec![];
+                            }
+                        },
+                        _ => bail!(sp2, "expected macro fragment specifier after `:`"),
+                    },
+                    _ => bail!(sp1, "expected `:` after macro metavariable in matcher"),
+                },
 
-    // Parse the macro_rules! invocation (`none` is for no interpolations):
-    let arg_reader = new_tt_reader(&cx.parse_sess().span_diagnostic,
-                                   None,
-                                   None,
-                                   def.body.clone());
-    let argument_map = parse_or_else(cx.parse_sess(),
-                                     cx.cfg(),
-                                     arg_reader,
-                                     argument_gram);
+                Some(tt) => out.push(fold::noop_fold_tt(tt, self)),
 
-    // Extract the arguments:
-    let lhses = match *argument_map[lhs_nm] {
-        MatchedSeq(ref s, _) => /* FIXME (#2543) */ (*s).clone(),
-        _ => cx.span_bug(def.span, "wrong-structured lhs")
+                None => break,
+            }
+        }
+
+        debug!("MatchNtFolder: old: {:?}", tts);
+        debug!("MatchNtFolder: new: {:?}", out);
+
+        out
+    }
+}
+
+pub fn parse_body(hdl: &SpanHandler, span: Span, body: Vec<TokenTree>)
+    -> Option<(Vec<TokenTree>, Vec<TokenTree>)>
+{
+    let end_span = Span {
+        lo: span.hi,
+        hi: span.hi,
+        expn_id: span.expn_id
+    };
+
+    let mut tts = body.into_iter();
+    let mut lhses = vec![];
+    let mut rhses = vec![];
+
+    let mut make_matcher = MatchNtFolder {
+        hdl: hdl,
+    };
+
+    // Parse the macro as a sequence of rules.
+    loop {
+        match tts.next() {
+            Some(lhs) => lhses.push(make_matcher.fold_tt(&lhs)),
+            None => break,
+        }
+
+        match tts.next() {
+            Some(TtToken(_, FatArrow)) => (),
+            Some(tt) => {
+                hdl.span_err(tt.get_span(), &format!("expected `=>`, found `{}`",
+                                                    &pprust::tt_to_string(&tt)));
+                return None;
+            }
+            None => {
+                hdl.span_err(end_span, "expected `=>`, found end of macro");
+                return None;
+            }
+        }
+
+        match tts.next() {
+            Some(rhs) => rhses.push(rhs),
+            None => {
+                hdl.span_err(end_span, "expected right-hand side, found end of macro");
+                return None;
+            }
+        }
+
+        match tts.next() {
+            None => break,
+            Some(TtToken(_, Semi)) => (),
+            Some(tt) => {
+                hdl.span_err(tt.get_span(), &format!("expected macro rule or end of macro,
+                                                     found `{}`", &pprust::tt_to_string(&tt)));
+                return None;
+            }
+        }
+    }
+
+    Some((lhses, rhses))
+}
+
+/// Parse a `macro_rules!` invocation into a `MacroDef`.
+///
+/// If the macro is malformed, emits error(s) and returns `None`.
+pub fn parse(cx: &mut ExtCtxt,
+             it: &ast::Item,
+             body: Vec<TokenTree>) -> Option<ast::MacroDef>
+{
+    let (lhses, rhses) = match parse_body(&cx.parse_sess.span_diagnostic, it.span, body) {
+        None => return None,
+        Some((l, r)) => (l, r),
     };
 
     for lhs in &lhses {
-        check_lhs_nt_follows(cx, &**lhs, def.span);
+        check_lhs_nt_follows(cx, lhs, it.span);
     }
 
-    let rhses = match *argument_map[rhs_nm] {
-        MatchedSeq(ref s, _) => /* FIXME (#2543) */ (*s).clone(),
-        _ => cx.span_bug(def.span, "wrong-structured rhs")
-    };
+    Some(ast::MacroDef {
+        ident: it.ident,
+        attrs: it.attrs.clone(),
+        id: ast::DUMMY_NODE_ID,
+        span: it.span,
+        imported_from: None,
+        export: attr::contains_name(&it.attrs, "macro_export"),
+        use_locally: true,
+        lhses: lhses,
+        rhses: rhses,
+    })
+}
 
+/// Converts a macro definition invocation into a syntax extension.
+pub fn compile(def: &ast::MacroDef) -> SyntaxExtension {
     let exp = box MacroRulesMacroExpander {
         name: def.ident,
         imported_from: def.imported_from,
-        lhses: lhses,
-        rhses: rhses,
+        lhses: def.lhses.clone(),
+        rhses: def.rhses.clone(),
     };
-
     NormalTT(exp, Some(def.span))
 }
 
-fn check_lhs_nt_follows(cx: &mut ExtCtxt, lhs: &NamedMatch, sp: Span) {
-    // lhs is going to be like MatchedNonterminal(NtTT(TtDelimited(...))), where the entire lhs is
+fn check_lhs_nt_follows(cx: &mut ExtCtxt, lhs: &TokenTree, sp: Span) {
+    // lhs is going to be like TtDelimited(...), where the entire lhs is
     // those tts. Or, it can be a "bare sequence", not wrapped in parens.
     match lhs {
-        &MatchedNonterminal(NtTT(ref inner)) => match &**inner {
-            &TtDelimited(_, ref tts) => {
-                check_matcher(cx, tts.tts.iter(), &Eof);
-            },
-            tt @ &TtSequence(..) => {
-                check_matcher(cx, Some(tt).into_iter(), &Eof);
-            },
-            _ => cx.span_bug(sp, "wrong-structured lhs for follow check (didn't find \
-            a TtDelimited or TtSequence)")
-        },
-        _ => cx.span_bug(sp, "wrong-structured lhs for follow check (didn't find a \
-           MatchedNonterminal)")
-    };
+        &TtDelimited(_, ref tts) => {
+            check_matcher(cx, tts.tts.iter(), &Eof);
+        }
+        tt @ &TtSequence(..) => {
+            check_matcher(cx, Some(tt).into_iter(), &Eof);
+        }
+        _ => cx.span_bug(sp, "wrong-structured lhs for follow check (didn't find \
+                              a TtDelimited or TtSequence)"),
+    }
     // we don't abort on errors on rejection, the driver will do that for us
     // after parsing/expansion. we can report every error in every macro this way.
 }
@@ -301,15 +367,13 @@ fn check_lhs_nt_follows(cx: &mut ExtCtxt, lhs: &NamedMatch, sp: Span) {
 // returns the last token that was checked, for TtSequence. this gets used later on.
 fn check_matcher<'a, I>(cx: &mut ExtCtxt, matcher: I, follow: &Token)
 -> Option<(Span, Token)> where I: Iterator<Item=&'a TokenTree> {
-    use print::pprust::token_to_string;
-
     let mut last = None;
 
     // 2. For each token T in M:
     let mut tokens = matcher.peekable();
     while let Some(token) = tokens.next() {
         last = match *token {
-            TtToken(sp, MatchNt(ref name, ref frag_spec, _, _)) => {
+            TtToken(sp, MatchNt(ref name, _, frag_spec)) => {
                 // ii. If T is a simple NT, look ahead to the next token T' in
                 // M.
                 let next_token = match tokens.peek() {
@@ -333,18 +397,14 @@ fn check_matcher<'a, I>(cx: &mut ExtCtxt, matcher: I, follow: &Token)
 
                 let tok = if let TtToken(_, ref tok) = *token { tok } else { unreachable!() };
                 // If T' is in the set FOLLOW(NT), continue. Else, reject.
-                match (&next_token, is_in_follow(cx, &next_token, frag_spec.as_str())) {
-                    (_, Err(msg)) => {
-                        cx.span_err(sp, &msg);
-                        continue
-                    }
+                match (&next_token, is_in_follow(cx, &next_token, frag_spec)) {
                     (&Eof, _) => return Some((sp, tok.clone())),
-                    (_, Ok(true)) => continue,
-                    (next, Ok(false)) => {
+                    (_, true) => continue,
+                    (next, false) => {
                         cx.span_err(sp, &format!("`${0}:{1}` is followed by `{2}`, which \
                                                   is not allowed for `{1}` fragments",
                                                  name.as_str(), frag_spec.as_str(),
-                                                 token_to_string(next)));
+                                                 pprust::token_to_string(next)));
                         continue
                     },
                 }
@@ -413,50 +473,49 @@ fn check_matcher<'a, I>(cx: &mut ExtCtxt, matcher: I, follow: &Token)
     last
 }
 
-fn is_in_follow(_: &ExtCtxt, tok: &Token, frag: &str) -> Result<bool, String> {
+fn is_in_follow(_: &ExtCtxt, tok: &Token, frag: FragSpec) -> bool {
     if let &CloseDelim(_) = tok {
-        Ok(true)
-    } else {
-        match frag {
-            "item" => {
-                // since items *must* be followed by either a `;` or a `}`, we can
-                // accept anything after them
-                Ok(true)
-            },
-            "block" => {
-                // anything can follow block, the braces provide a easy boundary to
-                // maintain
-                Ok(true)
-            },
-            "stmt" | "expr"  => {
-                match *tok {
-                    FatArrow | Comma | Semi => Ok(true),
-                    _ => Ok(false)
-                }
-            },
-            "pat" => {
-                match *tok {
-                    FatArrow | Comma | Eq => Ok(true),
-                    _ => Ok(false)
-                }
-            },
-            "path" | "ty" => {
-                match *tok {
-                    Comma | FatArrow | Colon | Eq | Gt => Ok(true),
-                    Ident(i, _) if i.as_str() == "as" => Ok(true),
-                    _ => Ok(false)
-                }
-            },
-            "ident" => {
-                // being a single token, idents are harmless
-                Ok(true)
-            },
-            "meta" | "tt" => {
-                // being either a single token or a delimited sequence, tt is
-                // harmless
-                Ok(true)
-            },
-            _ => Err(format!("invalid fragment specifier `{}`", frag))
-        }
+        return true;
+    }
+
+    match frag {
+        FragSpec::Item => {
+            // since items *must* be followed by either a `;` or a `}`, we can
+            // accept anything after them
+            true
+        },
+        FragSpec::Block => {
+            // anything can follow block, the braces provide a easy boundary to
+            // maintain
+            true
+        },
+        FragSpec::Stmt | FragSpec::Expr  => {
+            match *tok {
+                FatArrow | Comma | Semi => true,
+                _ => false
+            }
+        },
+        FragSpec::Pat => {
+            match *tok {
+                FatArrow | Comma | Eq => true,
+                _ => false
+            }
+        },
+        FragSpec::Path | FragSpec::Ty => {
+            match *tok {
+                Comma | FatArrow | Colon | Eq | Gt => true,
+                Ident(i, _) if i.as_str() == "as" => true,
+                _ => false
+            }
+        },
+        FragSpec::Ident => {
+            // being a single token, idents are harmless
+            true
+        },
+        FragSpec::Meta | FragSpec::Tt => {
+            // being either a single token or a delimited sequence, tt is
+            // harmless
+            true
+        },
     }
 }

@@ -17,6 +17,7 @@ use ast;
 use ast_util::path_to_ident;
 use ext::mtwt;
 use ext::build::AstBuilder;
+use ext::tt::macro_rules;
 use attr;
 use attr::AttrMetaMethods;
 use codemap;
@@ -671,17 +672,12 @@ pub fn expand_item_mac(it: P<ast::Item>,
                     });
                     // DON'T mark before expansion.
 
-                    let def = ast::MacroDef {
-                        ident: it.ident,
-                        attrs: it.attrs.clone(),
-                        id: ast::DUMMY_NODE_ID,
-                        span: it.span,
-                        imported_from: None,
-                        export: attr::contains_name(&it.attrs, "macro_export"),
-                        use_locally: true,
-                        body: tts,
-                    };
-                    fld.cx.insert_macro(def);
+                    match macro_rules::parse(fld.cx, &it, tts) {
+                        Some(def) => fld.cx.insert_macro(def),
+
+                        // bad macro; compile() will have logged errors.
+                        None => assert!(fld.cx.parse_sess.span_diagnostic.handler().has_errors()),
+                    }
 
                     // macro_rules! has a side effect but expands to nothing.
                     fld.cx.bt_pop();

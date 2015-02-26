@@ -101,6 +101,64 @@ impl Lit {
     }
 }
 
+macro_rules! make_FragSpec {
+    ( $( $str:expr => $id:ident, )* ) => {
+        /// A fragment specifier, indicating what sort of syntax to accept in a
+        /// macro matcher.
+        ///
+        /// These are described in the "Advanced Macros" chapter.
+        #[derive(Copy, Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
+        pub enum FragSpec {
+            $( $id, )*
+        }
+
+        impl FragSpec {
+            #[inline]
+            pub fn from_ident(ident: ast::Ident) -> Option<FragSpec> {
+                match ident.as_str() {
+                    $(
+                        $str => Some(FragSpec::$id),
+                    )*
+
+                    _ => None,
+                }
+            }
+
+            #[inline]
+            pub fn as_str(self) -> &'static str {
+                match self {
+                    $(
+                        FragSpec::$id => $str,
+                    )*
+                }
+            }
+
+            /// Returns a static string describing the possible `FragSpec`s.
+            #[inline]
+            pub fn help() -> &'static str {
+                concat!("should be one of: ",
+                    $(
+                        $str, " "
+                    ),*
+                )
+            }
+        }
+    }
+}
+
+make_FragSpec! {
+    "item" => Item,
+    "block" => Block,
+    "stmt" => Stmt,
+    "expr" => Expr,
+    "pat" => Pat,
+    "path" => Path,
+    "ty" => Ty,
+    "ident" => Ident,
+    "meta" => Meta,
+    "tt" => Tt,
+}
+
 #[allow(non_camel_case_types)]
 #[derive(Clone, RustcEncodable, RustcDecodable, PartialEq, Eq, Hash, Debug)]
 pub enum Token {
@@ -153,8 +211,8 @@ pub enum Token {
     /// Doc comment
     DocComment(ast::Name),
     // In left-hand-sides of MBE macros:
-    /// Parse a nonterminal (name to bind, name of NT, styles of their idents)
-    MatchNt(ast::Ident, ast::Ident, IdentStyle, IdentStyle),
+    /// Parse a nonterminal
+    MatchNt(ast::Ident, IdentStyle, FragSpec),
     // In right-hand-sides of MBE macros:
     /// A syntactic variable that will be filled in by macro expansion.
     SubstNt(ast::Ident, IdentStyle),

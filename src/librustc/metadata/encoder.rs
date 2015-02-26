@@ -1831,7 +1831,15 @@ fn encode_macro_defs(rbml_w: &mut Encoder,
         encode_attributes(rbml_w, &def.attrs);
 
         rbml_w.start_tag(tag_macro_def_body);
-        rbml_w.wr_str(&pprust::tts_to_string(&def.body));
+
+        for (lhs, rhs) in def.lhses.iter().zip(def.rhses.iter()) {
+            rbml_w.wr_str("(");
+            rbml_w.wr_str(&pprust::tt_to_string(lhs));
+            rbml_w.wr_str(") => (");
+            rbml_w.wr_str(&pprust::tt_to_string(rhs));
+            rbml_w.wr_str(")");
+        }
+
         rbml_w.end_tag();
 
         rbml_w.end_tag();

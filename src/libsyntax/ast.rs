@@ -939,10 +939,11 @@ impl TokenTree {
                                                   token::Plain))];
                 v[index].clone()
             }
-            (&TtToken(sp, token::MatchNt(name, kind, name_st, kind_st)), _) => {
-                let v = [TtToken(sp, token::SubstNt(name, name_st)),
+            (&TtToken(sp, token::MatchNt(name, style, frag_spec)), _) => {
+                let v = [TtToken(sp, token::SubstNt(name, style)),
                          TtToken(sp, token::Colon),
-                         TtToken(sp, token::Ident(kind, kind_st))];
+                         TtToken(sp, token::Ident(token::str_to_ident(frag_spec.as_str()),
+                                                  token::Plain))];
                 v[index].clone()
             }
             (&TtSequence(_, ref seq), _) => {
@@ -1728,7 +1729,8 @@ pub struct MacroDef {
     pub imported_from: Option<Ident>,
     pub export: bool,
     pub use_locally: bool,
-    pub body: Vec<TokenTree>,
+    pub lhses: Vec<TokenTree>,
+    pub rhses: Vec<TokenTree>,
 }
 
 #[cfg(test)]

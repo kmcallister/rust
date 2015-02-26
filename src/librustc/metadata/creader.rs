@@ -27,6 +27,7 @@ use syntax::abi;
 use syntax::attr;
 use syntax::attr::AttrMetaMethods;
 use syntax::codemap::{Span, mk_sp};
+use syntax::ext::tt::macro_rules;
 use syntax::parse;
 use syntax::parse::token::InternedString;
 use syntax::parse::token;
@@ -530,6 +531,13 @@ impl<'a> CrateReader<'a> {
                 let body = p.parse_all_token_trees();
                 let span = mk_sp(lo, p.last_span.hi);
                 p.abort_if_errors();
+
+                let body = macro_rules::parse_body(&self.sess.diagnostic(), span, body);
+                let (lhses, rhses) = match body {
+                    None => self.sess.fatal(&format!("malformed exported macro within
+                                                      crate {}", krate.ident)),
+                    Some((l, r)) => (l, r),
+                };
                 macros.push(ast::MacroDef {
                     ident: name.ident(),
                     attrs: attrs,
@@ -540,7 +548,8 @@ impl<'a> CrateReader<'a> {
                     export: false,
                     use_locally: false,
 
-                    body: body,
+                    lhses: lhses,
+                    rhses: rhses,
                 });
                 true
             }

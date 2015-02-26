@@ -286,7 +286,7 @@ pub fn token_to_string(tok: &Token) -> String {
         /* Other */
         token::DocComment(s)        => s.as_str().to_string(),
         token::SubstNt(s, _)        => format!("${}", s),
-        token::MatchNt(s, t, _, _)  => format!("${}:{}", s, t),
+        token::MatchNt(s, _, t)     => format!("${}:{}", s, t.as_str()),
         token::Eof                  => "<eof>".to_string(),
         token::Whitespace           => " ".to_string(),
         token::Comment              => "/* */".to_string(),
@@ -1205,8 +1205,8 @@ impl<'a> State<'a> {
             // otherwise imported macros get re-parsed from crate metadata incorrectly (#20701)
             suppress_space = match tt {
                 &ast::TtToken(_, token::Ident(_, token::ModName)) |
-                &ast::TtToken(_, token::MatchNt(_, _, _, token::ModName)) |
                 &ast::TtToken(_, token::SubstNt(_, token::ModName)) => true,
+                // MatchNT fragment specifier is never part of a path
                 _ => false
             }
         }

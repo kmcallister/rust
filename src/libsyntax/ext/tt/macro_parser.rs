@@ -90,7 +90,7 @@ use parse::ParseSess;
 use parse::attr::ParserAttr;
 use parse::parser::{LifetimeAndTypesWithoutColons, Parser};
 use parse::token::{Eof, DocComment, MatchNt, SubstNt};
-use parse::token::{Token, Nonterminal};
+use parse::token::{Token, Nonterminal, FragSpec};
 use parse::token;
 use print::pprust;
 use ptr::P;
@@ -218,7 +218,7 @@ pub fn nameize(p_s: &ParseSess, ms: &[TokenTree], res: &[Rc<NamedMatch>])
                     n_rec(p_s, next_m, res, ret_val, idx)
                 }
             }
-            &TtToken(sp, MatchNt(bind_name, _, _, _)) => {
+            &TtToken(sp, MatchNt(bind_name, _, _)) => {
                 match ret_val.entry(bind_name) {
                     Vacant(spot) => {
                         spot.insert(res[*idx].clone());
@@ -458,9 +458,9 @@ pub fn parse(sess: &ParseSess,
                 || bb_eis.len() > 1 {
                 let nts = bb_eis.iter().map(|ei| {
                     match ei.top_elts.get_tt(ei.idx) {
-                      TtToken(_, MatchNt(bind, name, _, _)) => {
+                      TtToken(_, MatchNt(bind, _, frag_spec)) => {
                         (format!("{} ('{}')",
-                                token::get_ident(name),
+                                frag_spec.as_str(),
                                 token::get_ident(bind))).to_string()
                       }
                       _ => panic!()
@@ -483,11 +483,10 @@ pub fn parse(sess: &ParseSess,
 
                 let mut ei = bb_eis.pop().unwrap();
                 match ei.top_elts.get_tt(ei.idx) {
-                  TtToken(span, MatchNt(_, name, _, _)) => {
-                    let name_string = token::get_ident(name);
+                  TtToken(_, MatchNt(_, _, frag_spec)) => {
                     let match_cur = ei.match_cur;
                     (&mut ei.matches[match_cur]).push(Rc::new(MatchedNonterminal(
-                        parse_nt(&mut rust_parser, span, &name_string))));
+                        parse_nt(&mut rust_parser, frag_spec))));
                     ei.idx += 1;
                     ei.match_cur += 1;
                   }
@@ -505,47 +504,39 @@ pub fn parse(sess: &ParseSess,
     }
 }
 
-pub fn parse_nt(p: &mut Parser, sp: Span, name: &str) -> Nonterminal {
-    match name {
-        "tt" => {
+pub fn parse_nt(p: &mut Parser, frag_spec: FragSpec) -> Nonterminal {
+    if frag_spec != FragSpec::Tt {
+        // check at the beginning and the parser checks after each bump
+        p.check_unknown_macro_variable();
+    }
+    match frag_spec {
+        FragSpec::Tt => {
             p.quote_depth += 1; //but in theory, non-quoted tts might be useful
             let res = token::NtTT(P(p.parse_token_tree()));
             p.quote_depth -= 1;
-            return res;
+            res
         }
-        _ => {}
-    }
-    // check at the beginning and the parser checks after each bump
-    p.check_unknown_macro_variable();
-    match name {
-      "item" => match p.parse_item(Vec::new()) {
-        Some(i) => token::NtItem(i),
-        None => p.fatal("expected an item keyword")
-      },
-      "block" => token::NtBlock(p.parse_block()),
-      "stmt" => token::NtStmt(p.parse_stmt(Vec::new())),
-      "pat" => token::NtPat(p.parse_pat()),
-      "expr" => token::NtExpr(p.parse_expr()),
-      "ty" => token::NtTy(p.parse_ty()),
-      // this could be handled like a token, since it is one
-      "ident" => match p.token {
-        token::Ident(sn,b) => { p.bump(); token::NtIdent(box sn,b) }
-        _ => {
-            let token_str = pprust::token_to_string(&p.token);
-            p.fatal(&format!("expected ident, found {}",
-                             &token_str[..]))
+        FragSpec::Item => match p.parse_item(Vec::new()) {
+            Some(i) => token::NtItem(i),
+            None => p.fatal("expected an item keyword")
+        },
+        FragSpec::Block => token::NtBlock(p.parse_block()),
+        FragSpec::Stmt => token::NtStmt(p.parse_stmt(Vec::new())),
+        FragSpec::Pat => token::NtPat(p.parse_pat()),
+        FragSpec::Expr => token::NtExpr(p.parse_expr()),
+        FragSpec::Ty => token::NtTy(p.parse_ty()),
+        // this could be handled like a token, since it is one
+        FragSpec::Ident => match p.token {
+            token::Ident(sn,b) => { p.bump(); token::NtIdent(box sn,b) }
+            _ => {
+                let token_str = pprust::token_to_string(&p.token);
+                p.fatal(&format!("expected ident, found {}",
+                                 &token_str[..]))
+            }
+        },
+        FragSpec::Path => {
+          token::NtPath(box p.parse_path(LifetimeAndTypesWithoutColons))
         }
-      },
-      "path" => {
-        token::NtPath(box p.parse_path(LifetimeAndTypesWithoutColons))
-      }
-      "meta" => token::NtMeta(p.parse_meta_item()),
-      _ => {
-          p.span_fatal_help(sp,
-                            &format!("invalid fragment specifier `{}`", name),
-                            "valid fragment specifiers are `ident`, `block`, \
-                             `stmt`, `expr`, `pat`, `ty`, `path`, `meta`, `tt` \
-                             and `item`")
-      }
+        FragSpec::Meta => token::NtMeta(p.parse_meta_item()),
     }
 }
