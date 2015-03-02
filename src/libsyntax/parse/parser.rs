@@ -2655,12 +2655,16 @@ impl<'a> Parser<'a> {
 
     pub fn check_unknown_macro_variable(&mut self) {
         if self.quote_depth == 0 {
+            /*
             match self.token {
                 token::SubstNt(name, _) =>
                     self.fatal(&format!("unknown macro variable `{}`",
                                        token::get_ident(name))),
                 _ => {}
             }
+            */
+
+            // FIXME
         }
     }
 
@@ -2723,7 +2727,7 @@ impl<'a> Parser<'a> {
                                     token_str))
                 },
                 /* we ought to allow different depths of unquotation */
-                token::Dollar | token::SubstNt(..) if p.quote_depth > 0 => {
+                token::Dollar | token::SubstNt(..) => { //if p.quote_depth > 0 => {
                     p.parse_unquoted()
                 }
                 _ => {

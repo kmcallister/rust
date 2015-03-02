@@ -22,6 +22,8 @@ use parse::lexer::TokenAndSpan;
 use std::rc::Rc;
 use std::ops::Add;
 use std::collections::HashMap;
+use std::rt;
+use std::old_io;
 
 ///an unzipping of `TokenTree`s
 #[derive(Clone)]
@@ -38,7 +40,7 @@ pub struct TtReader<'a> {
     /// the unzipped tree:
     stack: Vec<TtFrame>,
     /* for MBE-style macro transcription */
-    interpolations: HashMap<Ident, Rc<NamedMatch>>,
+    interpolations: Option<HashMap<Ident, Rc<NamedMatch>>>,
     imported_from: Option<Ident>,
 
     // Some => return imported_from as the next token
@@ -75,6 +77,8 @@ pub fn new_tt_reader_with_doc_flag<'a>(sp_diag: &'a SpanHandler,
                                        src: Vec<ast::TokenTree>,
                                        desugar_doc_comments: bool)
                                        -> TtReader<'a> {
+    println!("constructing TtReader");
+    rt::backtrace::write(&mut old_io::stdout()).unwrap();
     let mut r = TtReader {
         sp_diag: sp_diag,
         stack: vec!(TtFrame {
@@ -87,10 +91,7 @@ pub fn new_tt_reader_with_doc_flag<'a>(sp_diag: &'a SpanHandler,
             dotdotdoted: false,
             sep: None,
         }),
-        interpolations: match interp { /* just a convenience */
-            None => HashMap::new(),
-            Some(x) => x,
-        },
+        interpolations: interp,
         imported_from: imported_from,
         crate_name_next: None,
         repeat_idx: Vec::new(),
@@ -247,9 +248,7 @@ pub fn tt_next_token(r: &mut TtReader) -> TokenAndSpan {
                 match lockstep_iter_size(&TtSequence(sp, seq.clone()),
                                          r) {
                     LisUnconstrained => {
-                        r.sp_diag.span_fatal(
-                            sp.clone(), /* blame macro writer */
-                            "attempted to repeat an expression \
+                        panic!("attempted to repeat an expression \
                              containing no syntax \
                              variables matched as repeating at this depth");
                     }

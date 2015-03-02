@@ -36,6 +36,7 @@
 #![feature(staged_api)]
 #![feature(std_misc)]
 #![feature(unicode)]
+#![feature(unmarked_api)]
 
 extern crate arena;
 extern crate fmt_macros;
